@@ -7,17 +7,13 @@
 #include <vector>
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
+#include "bbPP.h"
 #include "json.hpp"
 
 using namespace std;
 
 // for convenience
 using json = nlohmann::json;
-
-// For converting back and forth between radians and degrees.
-constexpr double pi() { return M_PI; }
-double deg2rad(double x) { return x * pi() / 180; }
-double rad2deg(double x) { return x * 180 / pi(); }
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -38,7 +34,10 @@ double distance(double x1, double y1, double x2, double y2)
 {
 	return sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
 }
-int ClosestWaypoint(double x, double y, const vector<double> &maps_x, const vector<double> &maps_y)
+
+// commented out helper functions and moved them to a separate header where used
+
+/*int ClosestWaypoint(double x, double y, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 
 	double closestLen = 100000; //large number
@@ -59,9 +58,9 @@ int ClosestWaypoint(double x, double y, const vector<double> &maps_x, const vect
 
 	return closestWaypoint;
 
-}
+}*/
 
-int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
+/*int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 
 	int closestWaypoint = ClosestWaypoint(x,y,maps_x,maps_y);
@@ -84,10 +83,10 @@ int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x,
   }
 
   return closestWaypoint;
-}
+}*/
 
 // Transform from Cartesian x,y coordinates to Frenet s,d coordinates
-vector<double> getFrenet(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
+/*vector<double> getFrenet(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 	int next_wp = NextWaypoint(x,y, theta, maps_x,maps_y);
 
@@ -133,52 +132,31 @@ vector<double> getFrenet(double x, double y, double theta, const vector<double> 
 
 	return {frenet_s,frenet_d};
 
-}
-
-// Transform from Frenet s,d coordinates to Cartesian x,y
-vector<double> getXY(double s, double d, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
-{
-	int prev_wp = -1;
-
-	while(s > maps_s[prev_wp+1] && (prev_wp < (int)(maps_s.size()-1) ))
-	{
-		prev_wp++;
-	}
-
-	int wp2 = (prev_wp+1)%maps_x.size();
-
-	double heading = atan2((maps_y[wp2]-maps_y[prev_wp]),(maps_x[wp2]-maps_x[prev_wp]));
-	// the x,y,s along the segment
-	double seg_s = (s-maps_s[prev_wp]);
-
-	double seg_x = maps_x[prev_wp]+seg_s*cos(heading);
-	double seg_y = maps_y[prev_wp]+seg_s*sin(heading);
-
-	double perp_heading = heading-pi()/2;
-
-	double x = seg_x + d*cos(perp_heading);
-	double y = seg_y + d*sin(perp_heading);
-
-	return {x,y};
-
-}
+}*/
 
 int main() {
   uWS::Hub h;
 
-  // Load up map values for waypoint's x,y,s and d normalized normal vectors
-  vector<double> map_waypoints_x;
-  vector<double> map_waypoints_y;
-  vector<double> map_waypoints_s;
-  vector<double> map_waypoints_dx;
-  vector<double> map_waypoints_dy;
-
-  // Waypoint map to read from
-  string map_file_ = "../data/highway_map.csv";
+  // Path Planner is initialized here!
+  bbPP bbplanner;
+  // initialise map inside planner - could have done this on construction
+  bbplanner.init("../data/highway_map.csv");
+  
   // The max s value before wrapping around the track back to 0
   double max_s = 6945.554;
 
-  ifstream in_map_(map_file_.c_str(), ifstream::in);
+  // commented out main map loading as moved to planner class
+  // Load up map values for waypoint's x,y,s and d normalized normal vectors
+  //vector<double> map_waypoints_x;
+  //vector<double> map_waypoints_y;
+  //vector<double> map_waypoints_s;
+  //vector<double> map_waypoints_dx;
+  //vector<double> map_waypoints_dy;
+
+  // Waypoint map to read from
+  //string map_file_ = "../data/highway_map.csv";
+
+  /*ifstream in_map_(map_file_.c_str(), ifstream::in);
 
   string line;
   while (getline(in_map_, line)) {
@@ -198,9 +176,9 @@ int main() {
   	map_waypoints_s.push_back(s);
   	map_waypoints_dx.push_back(d_x);
   	map_waypoints_dy.push_back(d_y);
-  }
+  }*/
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&bbplanner](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -237,14 +215,51 @@ int main() {
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
           	auto sensor_fusion = j[1]["sensor_fusion"];
 
-          	json msgJson;
+            // update state of planner for ego
+            bbplanner.set_new_state(previous_path_x.size(), car_s, car_d, car_speed, end_path_s, end_path_d, car_x, car_y, car_yaw);
 
-          	vector<double> next_x_vals;
+            // collect and pass all sensorfusion data to environnment state detector
+            vector< vector<double> > environment;
+            for (int i=0;i < sensor_fusion.size();++i) {
+              double vx = sensor_fusion[i][3];
+              double vy = sensor_fusion[i][4];
+              double sf_speed = sqrt(vx*vx+vy*vy)/2.24;
+              double sf_s = sensor_fusion[i][5];
+              double d = sensor_fusion[i][6];
+              int detected_lane = bbplanner.detect_current_lane(d);
+
+              // project forward in time
+              sf_s += previous_path_x.size()*0.02*sf_speed;
+              
+              // create car vector
+              vector<double> detected_car;
+              detected_car = {sf_s, d, sf_speed, detected_lane};
+
+              // add to environment state
+              environment.push_back(detected_car);
+            }
+            // pass the collected environment data to the planner
+            bbplanner.detect_environment_state(environment);
+
+
+            json msgJson;
+
+            vector<double> next_x_vals;
           	vector<double> next_y_vals;
 
+            // add the current previous path values to x and y
+            int prev_size = previous_path_x.size();
+            for (int i = 0; i < prev_size; ++i)
+            {
+              next_x_vals.push_back(previous_path_x[i]);
+              next_y_vals.push_back(previous_path_y[i]);
+            }
 
-          	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
-          	msgJson["next_x"] = next_x_vals;
+            // TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
+            // ask the planner for the next best path
+            bbplanner.getPath(next_x_vals, next_y_vals);
+          	
+            msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
 
           	auto msg = "42[\"control\","+ msgJson.dump()+"]";
