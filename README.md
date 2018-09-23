@@ -90,15 +90,16 @@ Here is the data provided from the Simulator to the C++ Program
 
 The /src directory contains:
 
-* main.cpp: sets up the simulator interaction, creates and initialises a path planner (lines 141 and 143) and calls for the next path from the planner (line 260) after passing the planner the car's current position information (set_new_state at line 219) and the sensor fusion data (detect_envronment_state at line 242)
+* main.cpp: sets up the simulator interaction, creates and initialises a path planner class (lines 141 and 143) and calls for the next optimal path from the planner (line 260) after passing the planner the car's current position information (set_new_state at line 219) and the sensor fusion data (detect_envronment_state at line 242)
 * spline.h: very helpful tool from: http://kluge.in-chemnitz.de/opensource/spline/spline.h
-* helper_functions.h: taking the udacity helpers for way point calculation and coordinate transformations into a sseparate header file. The prime functions used were: deg2rad (line 15) and getXY (at line 19).
+* helper_functions.h: taking the udacity helpers for way point calculation and coordinate transformations into a separate header file. The prime functions used were: deg2rad (line 15) and getXY (at line 19).
 * bbPP.h and bbPP.cpp: the path planner class. This is described in more detail in the architecture section below but at a high level this class:
   * monitors the other cars on the road and determines if any of them are a danger to the ego vehicle, which in turn affects available options for the car to follow.
   * deduces the best option from those available using a simplified cost function decision tree which controls a target speed and target lane. The decision tree is simply: If the lane ahead is clear, stay in that lane and increase speed to maximum but if the lane ahead is not clear, move left or right if that is possible and either lane is clear or reduce speed in the current lane if a lane move is not possible
   * generates a path for the car based on the chosen option. There are 2 methods employed:
     * JMT. This doesn't pass the rubric as the paths generate too much acceleration and jerk and are not accurate enough to stay within lanes
     * Spline. This method does pass the rubric and generates a smooth path for keeping or changing lanes
+    * This is controlled by the variable useJMT (false, true) in the Init method of the planner class
 
 ## Path Planning Architecture
 
@@ -106,13 +107,59 @@ The path planner architecture can be seen below:
 
 ![alt text](assets/architecture.png "Path Planner Architecture")
 
+There are 3 parts to the path planner:
 
+*Behaviour Planner*
 
+This takes the car's current state and predictions of the wider environment's state over time to create a suggested maneuveur which the trajectory module can then create and pass to the vehicle's motion controller. The planner is responsible for suggesting maneuvers which are:
+  * safe
+  * feasible
+  * legal
+  *efficient
 
-## The Simulator Track and Waypoints
+The planner is not responsible for the execution details or collision avoidance. In this implementation, a very simple state machine is used which models 3 possible states:
+  * KEEP LANE - which keeps the vehicle in the current lane at the most optimum speed possible taking account of nearby vehicles ahead of the car
+  * CHANGE LEFT - which instructs the car to move to the left lane if this is feasible (e.g. the car isn't already in the left most lane and there is space in the lane to move into from the prediction data)
+  * CHANGE RIGHT - which instructs the car to move to the right lane if safe to do so
 
-## Spline versus JMT
+A cost function is typically used to determine the best course of action. In this implementation, the cost function is a simplifed decision tree:
+  * if there is no car ahead: KEEP LANE and increase speed until max speed is reached
+  * else if it is safe to do so: CHANGE LEFT
+  * else if it is safe to do so: CHANGE RIGHT
+  * else: KEEP LANE and reduce speed until the car ahead's speed is reached
 
-## Reflections on the project
+Also, multiple trajectories would normally be generated and fed into the cost function algorithm to establish the best course of action whereas in this implementation the single course of action is established and fed to the trajectory generator.
 
-## Improvement areas to focus on
+*Prediction*
+
+The prediction module takes the car and wider environment state and predicts future car/environment state so that the behaviour planner can take the most appropriate course of action.
+
+In this implementation, the car's end path S (longtitudinal distance) and D (latitudinal position) position is compared to each of the detected car's position to determine whether any of the cars are likely to obstruct our car over the course of the next 30 metres or so.
+
+This updates the environment state for each lane to give a target speed for each lane and whether any lane is blocked.
+
+This in turn is passed to the behaviour planner so that the most optimal next state can be deduced.
+
+*Trajectory*
+
+The trajectory generator in this implementation (highway driving) takes the car's current state, the goal end state provided by the behaviour planner and plans a trajectory within the constraints of the highway (maximum speed, maximum acceleration, maximum jerk).
+
+2 options for trajectory generation were tried:
+
+* Jerk Minimizing Trajectory (JMT) using a quintic polynomial for both S and D based on inputs of
+  * start position, velocity, acceleration
+  * goal position, velocity, acceleration
+* Spline trajectory generation (from the project Q&A) which creates a spline function from a set of points starting with the car's current state projected 30,60, and 90 metres forward.
+
+Both trajectories were then projected forward in the car's X and Y coordinates for 50 path points. On each iteration of the planner, the remaining points from the previous path were used as starting points for the new path and only points to get to the 50 total were needed from the new trajectory. In this way a smooth transition from step to step was maintained.
+
+The spline approach generated smooth X,Y paths. The JMT approach did not. This was due to the inaccuracy in converting from frenet coordinates back to cartesian coordinates resulting in paths which were sometimes very 'jerky'.
+
+## Reflections on the project and Improvement areas to focus on
+
+This implementation is very simple and failed to utilise JMT trajectories owing to an inability to figure out how to generate more accurate coordinate transformations from frenet to cartesian so that the provided path was smooth.
+
+Areas which could be enhanced:
+
+* the car's decision making takes account of immediate highway state but is limited. This sometimes led to a 'follow' bias whereas a human driver would have slowed down and changed 2 lanes to overtake 2 lanes of slow traffic. A better environment prediction unit and a more sophisticated state machine could lead to better driving decisions.
+* the planner and trajectory generator only provide a single trajectory to follow. A more sophisticated approach - as shown in the lessons - would have been to generate a set of trajectories and use a cost function to arrive at the best option.
