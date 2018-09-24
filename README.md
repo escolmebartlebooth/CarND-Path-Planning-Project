@@ -5,9 +5,6 @@ Author: David Escolme (taken from the Udacity README)
 
 Date: 22 September 2018
 
-### Simulator.
-You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).
-
 ### Objectives
 In this project the goal is to safely navigate around a virtual highway with other traffic that is driving +-10 MPH of the 50 MPH speed limit. The car's localization and sensor fusion data is provided, there is also a sparse map list of waypoints around the highway. The car should try to go as close as possible to the 50 MPH speed limit, which means passing slower traffic when possible, note that other cars will try to change lanes too.
 
@@ -24,6 +21,9 @@ The highway's waypoints loop around so the frenet s value, distance along the ro
 2. Make a build directory: `mkdir build && cd build`
 3. Compile: `cmake .. && make`
 4. Run it: `./path_planning`.
+
+### Simulator.
+You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).
 
 Here is the data provided from the Simulator to the C++ Program
 
@@ -90,16 +90,20 @@ Here is the data provided from the Simulator to the C++ Program
 
 The /src directory contains:
 
-* main.cpp: sets up the simulator interaction, creates and initialises a path planner class (lines 141 and 143) and calls for the next optimal path from the planner (line 260) after passing the planner the car's current position information (set_new_state at line 219) and the sensor fusion data (detect_envronment_state at line 242)
+* main.cpp: This sets up the simulator interaction, creates and initialises a path planner class (lines 141 and 143) and calls for the next optimal path from the planner (line 260) after passing the planner the car's current position information (set_new_state at line 219) and the sensor fusion data (detect_envronment_state at line 242)
 * spline.h: very helpful tool from: http://kluge.in-chemnitz.de/opensource/spline/spline.h
 * helper_functions.h: taking the udacity helpers for way point calculation and coordinate transformations into a separate header file. The prime functions used were: deg2rad (line 15) and getXY (at line 19).
 * bbPP.h and bbPP.cpp: the path planner class. This is described in more detail in the architecture section below but at a high level this class:
   * monitors the other cars on the road and determines if any of them are a danger to the ego vehicle, which in turn affects available options for the car to follow.
-  * deduces the best option from those available using a simplified cost function decision tree which controls a target speed and target lane. The decision tree is simply: If the lane ahead is clear, stay in that lane and increase speed to maximum but if the lane ahead is not clear, move left or right if that is possible and either lane is clear or reduce speed in the current lane if a lane move is not possible
+  * deduces the best option from those available using a simplified cost function decision tree which controls a target speed and target lane. The decision tree is simply:
+    * If the lane ahead is clear, stay in that lane and increase speed to maximum
+    * but if the lane ahead is not clear, move left or right if that is possible and either lane is clear
+    * or reduce speed in the current lane if a lane move is not possible
   * generates a path for the car based on the chosen option. There are 2 methods employed:
     * JMT. This doesn't pass the rubric as the paths generate too much acceleration and jerk and are not accurate enough to stay within lanes
     * Spline. This method does pass the rubric and generates a smooth path for keeping or changing lanes
-    * This is controlled by the variable useJMT (false, true) in the Init method of the planner class
+    * The option to generate the trajectory is controlled by the variable useJMT (false, true) in the Init method of the planner class (line 42)
+
 
 ## Path Planning Architecture
 
@@ -111,11 +115,11 @@ There are 3 parts to the path planner:
 
 *Behaviour Planner*
 
-This takes the car's current state and predictions of the wider environment's state over time to create a suggested maneuveur which the trajectory module can then create and pass to the vehicle's motion controller. The planner is responsible for suggesting maneuvers which are:
+This takes the car's current state (localisation) and predictions of the wider environment's state (sensor fusion) over time to create a suggested maneuveur which the trajectory module can then create and pass to the vehicle's motion controller. The planner is responsible for suggesting maneuvers which are:
   * safe
   * feasible
   * legal
-  *efficient
+  * efficient
 
 The planner is not responsible for the execution details or collision avoidance. In this implementation, a very simple state machine is used which models 3 possible states:
   * KEEP LANE - which keeps the vehicle in the current lane at the most optimum speed possible taking account of nearby vehicles ahead of the car
@@ -134,7 +138,7 @@ Also, multiple trajectories would normally be generated and fed into the cost fu
 
 The prediction module takes the car and wider environment state and predicts future car/environment state so that the behaviour planner can take the most appropriate course of action.
 
-In this implementation, the car's end path S (longtitudinal distance) and D (latitudinal position) position is compared to each of the detected car's position to determine whether any of the cars are likely to obstruct our car over the course of the next 30 metres or so.
+In this implementation, the car's end path S (longtitudinal distance) and D (latitudinal position) coordinates are compared to each of the detected car's position to determine whether any of the cars are likely to obstruct our car over the course of the next 30 metres or so. The end path is the last remaining previous path point. This is used to ensure a smooth transition from step to step.
 
 This updates the environment state for each lane to give a target speed for each lane and whether any lane is blocked.
 
@@ -149,11 +153,38 @@ The trajectory generator in this implementation (highway driving) takes the car'
 * Jerk Minimizing Trajectory (JMT) using a quintic polynomial for both S and D based on inputs of
   * start position, velocity, acceleration
   * goal position, velocity, acceleration
-* Spline trajectory generation (from the project Q&A) which creates a spline function from a set of points starting with the car's current state projected 30,60, and 90 metres forward.
+  * the output is a 5th order polynomial which can be used to generate a trajectory
+* Spline trajectory generation (from the project Q&A) which creates a spline function from a set of points starting with the car's current state projected 30,60, and 90 metres forward. Again, the spline is used to create X and Y points to total 50 future waypoints.
 
 Both trajectories were then projected forward in the car's X and Y coordinates for 50 path points. On each iteration of the planner, the remaining points from the previous path were used as starting points for the new path and only points to get to the 50 total were needed from the new trajectory. In this way a smooth transition from step to step was maintained.
 
 The spline approach generated smooth X,Y paths. The JMT approach did not. This was due to the inaccuracy in converting from frenet coordinates back to cartesian coordinates resulting in paths which were sometimes very 'jerky'.
+
+## Code summary
+
+Setup:
+
+* create a planner (main.cpp line 141)
+* Initialise the planner (bbPP::Init line 20) with the map (main.cpp line 143)
+
+On each iteration:
+
+* set the planner's new state (bbPP::set_new_state line 79) (main.cpp line 219)
+* collect sensor fusion data and project forward to end of car's previous path (main.cpp line 222 to 240)
+* send the sensor fusion data to the planner (bbPP::detect_environment_state line 110) (main.cpp line 241)
+* add the old path, if it exists to the next path (main.cpp line 251)
+* send the new path to the planner and get the best path back (bbPP::getPath line 287) (main.cpp line 260)
+* send the new path to the simulator (main.cpp line 268)
+
+In the planner class:
+
+* Init (line 20) - initialises variables and constraints and sets up the map
+* set_new_state(line 79) - sets the car s and d position to the end of the previous path (unless there is no previous path in which case the actual s and d are used), sets the car x,y, and yaw values and also v but converted to m/s. Finally the current lane is calculated (detect_current_lane line 166)
+* detect_environment_state (line 110) iterates over the sensor fusion data and determines whether any car is impinging forward or lateral movement to another lane. An environment state vector, reset at each iteration, is maintained for each lane.
+* getPath (line 287):
+  * gets the best option (get_best_option line 242) based on the simple decision tree outlined above
+  * then generates the next path using either JMT or Spline and then adds new points to the path which will already contain the remaining points of the previous path
+
 
 ## Reflections on the project and Improvement areas to focus on
 
@@ -163,3 +194,4 @@ Areas which could be enhanced:
 
 * the car's decision making takes account of immediate highway state but is limited. This sometimes led to a 'follow' bias whereas a human driver would have slowed down and changed 2 lanes to overtake 2 lanes of slow traffic. A better environment prediction unit and a more sophisticated state machine could lead to better driving decisions.
 * the planner and trajectory generator only provide a single trajectory to follow. A more sophisticated approach - as shown in the lessons - would have been to generate a set of trajectories and use a cost function to arrive at the best option.
+* Using Jerk Minimizing Trajectories would guarantee jerk minimal paths. To use them, better interpolation between way points and a more accurate conversion from Frenet to Cartesian space is needed.
